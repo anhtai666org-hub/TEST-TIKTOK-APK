@@ -1,103 +1,186 @@
 package com.yamadanihon.tiktokhybrid
 
-import android.content.Intent
-import android.net.Uri
+import android.annotation.SuppressLint
+import android.graphics.Color
 import android.os.Bundle
-import android.view.Gravity
 import android.view.KeyEvent
-import android.view.ViewGroup
-import android.widget.Button
+import android.view.View
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.Button
+import android.view.Gravity
+import android.view.ViewGroup
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
-import androidx.media3.common.MediaItem
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
 
+/**
+ * Interim TV-first TikTok web client.
+ * This does not pretend to be the native TikTok TV APK or use private mobile APIs.
+ */
 class MainActivity : AppCompatActivity() {
-    private var player: ExoPlayer? = null
-    private lateinit var playerView: PlayerView
+    private lateinit var web: WebView
     private lateinit var status: TextView
+    private lateinit var loading: TextView
+    private var lastUrl = "https://www.tiktok.com/foryou"
 
-    private val pickVideo = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) {
-            try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
-            playVideo(uri)
-        }
-    }
-
+    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = android.graphics.Color.rgb(16,16,20)
-        window.navigationBarColor = android.graphics.Color.rgb(16,16,20)
+        window.statusBarColor = Color.rgb(8, 8, 10)
+        window.navigationBarColor = Color.rgb(8, 8, 10)
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(28, 20, 28, 20)
-            setBackgroundColor(android.graphics.Color.rgb(16,16,20))
+            setBackgroundColor(Color.rgb(8, 8, 10))
+            layoutParams = ViewGroup.LayoutParams(-1, -1)
         }
-        val title = TextView(this).apply {
-            text = "TikTok TV Hybrid"
-            textSize = 28f
-            setTextColor(android.graphics.Color.WHITE)
-            gravity = Gravity.CENTER
-            contentDescription = "TikTok TV Hybrid home"
+        val top = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(24, 10, 24, 10)
+            setBackgroundColor(Color.rgb(18, 18, 22))
+        }
+        val brand = TextView(this).apply {
+            text = "TikTok  TV"
+            textSize = 23f
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
         }
         status = TextView(this).apply {
-            text = "Chọn video trong thiết bị để bắt đầu"
-            textSize = 15f
-            setTextColor(android.graphics.Color.LTGRAY)
-            gravity = Gravity.CENTER
-            setPadding(8, 12, 8, 12)
+            text = "Đang chuẩn bị bảng tin…"
+            textSize = 14f
+            setTextColor(Color.LTGRAY)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(24, 0, 16, 0)
         }
-        val choose = Button(this).apply {
-            text = "Chọn video"
-            textSize = 18f
+        val refresh = Button(this).apply {
+            text = "Tải lại"
             isFocusable = true
-            isFocusableInTouchMode = true
-            setOnClickListener { pickVideo.launch(arrayOf("video/*")) }
+            setOnClickListener { web.reload() }
         }
-        playerView = PlayerView(this).apply {
-            useController = true
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+        val home = Button(this).apply {
+            text = "Dành cho bạn"
+            isFocusable = true
+            setOnClickListener { loadFeed() }
         }
-        root.addView(title, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(choose, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(playerView)
+        top.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(status, LinearLayout.LayoutParams(0, -2, 2f))
+        top.addView(home)
+        top.addView(refresh)
+        root.addView(top, LinearLayout.LayoutParams(-1, -2))
+
+        val frame = FrameLayout(this)
+        web = WebView(this)
+        web.setBackgroundColor(Color.BLACK)
+        web.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            databaseEnabled = true
+            loadsImagesAutomatically = true
+            mediaPlaybackRequiresUserGesture = false
+            javaScriptCanOpenWindowsAutomatically = false
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            userAgentString = WebSettings.getDefaultUserAgent(this@MainActivity)
+                .replace(Regex("; wv\\).*"), ")")
+        }
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
+        web.webChromeClient = WebChromeClient()
+        web.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                status.text = "Đang tải bảng tin…"
+            }
+            override fun onPageFinished(view: WebView?, url: String?) {
+                if (url != null) lastUrl = url
+                status.text = if (url?.contains("tiktok.com") == true) "TikTok Web · Dùng remote để điều hướng" else "Đã mở trang"
+            }
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val url = request?.url?.toString() ?: return false
+                return !(url.startsWith("https://") || url.startsWith("http://"))
+            }
+        }
+        frame.addView(web, FrameLayout.LayoutParams(-1, -1))
+        loading = TextView(this).apply {
+            text = "TikTok TV\n\nĐang kết nối bảng tin trực tuyến…"
+            textSize = 22f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.BLACK)
+        }
+        // Keep the loading overlay out of the way once the page starts rendering.
+        frame.addView(loading, FrameLayout.LayoutParams(-1, -1))
+        root.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
-        choose.requestFocus()
+
+        web.setOnTouchListener { _, _ -> false }
+        web.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                status.text = "Đang tải bảng tin…"
+                loading.visibility = View.VISIBLE
+            }
+            override fun onPageCommitVisible(view: WebView?, url: String?) {
+                loading.visibility = View.GONE
+            }
+            override fun onPageFinished(view: WebView?, url: String?) {
+                if (url != null) lastUrl = url
+                status.text = if (url?.contains("tiktok.com") == true) "TikTok Web · Dùng remote để điều hướng" else "Đã mở trang"
+                loading.visibility = View.GONE
+            }
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val url = request?.url?.toString() ?: return false
+                return !(url.startsWith("https://") || url.startsWith("http://"))
+            }
+        }
+        loadFeed()
     }
 
-    private fun playVideo(uri: Uri) {
-        if (player == null) {
-            player = ExoPlayer.Builder(this).build().also { playerView.player = it }
-        }
-        player?.setMediaItem(MediaItem.fromUri(uri))
-        player?.prepare()
-        player?.playWhenReady = true
-        status.text = "Đang phát video đã chọn"
+    private fun loadFeed() {
+        loading.visibility = View.VISIBLE
+        web.loadUrl("https://www.tiktok.com/foryou")
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
-            player?.let { if (it.isPlaying) it.pause() else it.play() }
-            return true
+        when (keyCode) {
+            KeyEvent.KEYCODE_BACK -> {
+                if (::web.isInitialized && web.canGoBack()) {
+                    web.goBack()
+                    return true
+                }
+            }
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                if (::web.isInitialized) web.requestFocus()
+            }
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                web.evaluateJavascript("(function(){var v=document.querySelector('video');if(v){v.paused?v.play():v.pause();}})();", null)
+                return true
+            }
         }
         return super.onKeyDown(keyCode, event)
     }
 
-    override fun onStop() {
-        super.onStop()
-        player?.pause()
+    override fun onPause() {
+        if (::web.isInitialized) web.onPause()
+        super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::web.isInitialized) web.onResume()
     }
 
     override fun onDestroy() {
-        playerView.player = null
-        player?.release()
-        player = null
+        if (::web.isInitialized) {
+            web.stopLoading()
+            web.loadUrl("about:blank")
+            web.removeAllViews()
+            web.destroy()
+        }
         super.onDestroy()
     }
 }
